@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drive Ultimate</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+
+<style>
+:root{--primary:#6366f1;--bg:#f5f7fb;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:Inter;}
+body{background:var(--bg);}
+
+/* LAYOUT */
+.app{display:flex;flex-direction:column;height:100vh}
+
+/* TOP */
+.topbar{
+  padding:10px;
+  background:white;
+  display:flex;
+  gap:10px;
+  border-bottom:1px solid #ddd;
+}
+.search{flex:1;padding:10px;border-radius:20px;border:1px solid #ccc}
+
+/* CONTENT */
+.content{flex:1;overflow:auto;padding:10px}
+
+/* GRID */
+.grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+}
+
+/* LIST */
+.list{display:flex;flex-direction:column;gap:10px}
+
+/* CARD */
+.card{
+  background:white;
+  padding:12px;
+  border-radius:12px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.08);
+  transition:0.2s;
+}
+.card:active{transform:scale(0.97)}
+
+/* FILE */
+.file-name{font-weight:600;margin-bottom:5px}
+
+/* ACTIONS */
+.actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:5px;
+}
+.actions button{
+  flex:1;
+  font-size:11px;
+  padding:6px;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+.primary{background:var(--primary);color:white}
+.danger{background:#ef4444;color:white}
+
+/* DROP */
+.drop-zone{
+  border:2px dashed #ccc;
+  padding:15px;
+  text-align:center;
+  border-radius:10px;
+  margin-bottom:10px;
+}
+.drop-zone.active{
+  border-color:var(--primary);
+  background:#eef2ff;
+}
+
+/* PROGRESS */
+.progress-box{
+  background:white;padding:10px;margin:8px 0;
+  border-radius:10px;
+}
+.progress-fill{
+  height:6px;width:0;background:var(--primary);
+}
+
+/* BREADCRUMB */
+.breadcrumb{font-size:12px;margin-bottom:8px}
+.breadcrumb span{color:var(--primary);cursor:pointer}
+
+/* BOTTOM NAV */
+.bottom-nav{
+  display:flex;
+  justify-content:space-around;
+  background:white;
+  border-top:1px solid #ddd;
+  padding:8px;
+}
+.nav-btn{text-align:center;font-size:12px}
+
+/* DESKTOP */
+@media(min-width:768px){
+  .grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+}
+</style>
+</head>
+
+<body>
+
+<div class="app">
+
+<div class="topbar">
+  <input class="search" id="searchBox" placeholder="Search..." oninput="search()">
+</div>
+
+<div class="content" id="contentArea">
+
+<div id="dropZone" class="drop-zone">Drag & Drop files</div>
+
+<div id="breadcrumb" class="breadcrumb"></div>
+<div id="progressContainer"></div>
+<div id="container" class="grid"></div>
+
+</div>
+
+<div class="bottom-nav">
+  <div class="nav-btn" onclick="goRoot()">🏠 Home</div>
+  <div class="nav-btn" onclick="toggleView()">🔄 View</div>
+  <div class="nav-btn" onclick="uploadClick()">📤 Upload</div>
+  <div class="nav-btn" onclick="createFolder()">📁 Folder</div>
+</div>
+
+<input type="file" id="fileInput" hidden>
+
+<script>
+const SUPABASE_URL="https://eyoeduibrhhwgkksyrrm.supabase.co";
+const SUPABASE_KEY="sb_publishable_tNbmINA3vcOD2jX6NRHchw_dRyOZwlz";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+let items=[],current=null,path=[],view="list";
+
+/* LOAD */
+async function load(){
+  let {data}=await sb.from("files").select("*");
+  items=data;
+  render();
+}
+
+/* RENDER */
+function render(){
+  container.className=view;
+  container.innerHTML="";
+
+  items.filter(i=>i.parent_id===current).forEach(i=>{
+    let d=document.createElement("div");
+    d.className="card";
+
+    d.innerHTML=`
+      <div class="file-name">${i.is_folder?"📁":"📄"} ${i.name}</div>
+
+      <div class="actions">
+        ${!i.is_folder ? `<button class="primary" onclick="share('${i.url}')">Share</button>`:''}
+        <button onclick="rename('${i.id}')">Rename</button>
+        <button onclick="move('${i.id}')">Move</button>
+        <button class="danger" onclick="del('${i.id}','${i.url}')">Delete</button>
+      </div>
+    `;
+
+    d.onclick=()=>{
+      if(i.is_folder) openFolder(i);
+      else window.open(i.url);
+    };
+
+    container.appendChild(d);
+  });
+
+  breadcrumb();
+}
+
+/* NAV */
+function openFolder(f){current=f.id;path.push(f);render();}
+function goRoot(){current=null;path=[];render();}
+function breadcrumb(){
+  let html=`<span onclick="goRoot()">Home</span>`;
+  path.forEach((p,i)=>{
+    html+=` / <span onclick="goTo(${i})">${p.name}</span>`;
+  });
+  breadcrumb.innerHTML=html;
+}
+function goTo(i){
+  path=path.slice(0,i+1);
+  current=path[i].id;
+  render();
+}
+
+/* VIEW */
+function toggleView(){
+  view=view==="grid"?"list":"grid";
+  render();
+}
+
+/* UPLOAD */
+function uploadClick(){fileInput.click();}
+fileInput.onchange=e=>upload(e.target.files[0]);
+
+async function upload(f){
+  if(!f) return;
+
+  let name=Date.now()+"_"+f.name;
+
+  let box=document.createElement("div");
+  box.className="progress-box";
+  box.innerHTML=`<b>${f.name}</b><div class="progress-fill"></div>`;
+  progressContainer.appendChild(box);
+
+  let bar=box.querySelector(".progress-fill");
+
+  let p=0;
+  let int=setInterval(()=>{
+    p+=10;if(p>=90) clearInterval(int);
+    bar.style.width=p+"%";
+  },200);
+
+  await sb.storage.from("uploads").upload(name,f);
+  bar.style.width="100%";
+
+  let {data}=sb.storage.from("uploads").getPublicUrl(name);
+
+  await sb.from("files").insert([{
+    name:f.name,
+    url:data.publicUrl,
+    parent_id:current,
+    is_folder:false
+  }]);
+
+  setTimeout(()=>box.remove(),1000);
+  load();
+}
+
+/* DRAG DROP */
+dropZone.ondragover=e=>{e.preventDefault();dropZone.classList.add("active");};
+dropZone.ondragleave=()=>dropZone.classList.remove("active");
+dropZone.ondrop=e=>{
+  e.preventDefault();
+  dropZone.classList.remove("active");
+  for(let f of e.dataTransfer.files) upload(f);
+};
+
+/* FILE ACTIONS */
+function share(url){
+  navigator.clipboard.writeText(url);
+  alert("Link copied!");
+}
+
+async function rename(id){
+  let name=prompt("New name?");
+  if(!name) return;
+  await sb.from("files").update({name}).eq("id",id);
+  load();
+}
+
+async function move(id){
+  let folders=items.filter(i=>i.is_folder).map(f=>f.name);
+  let choice=prompt("Move to folder:\n"+folders.join("\n"));
+  let folder=items.find(f=>f.name===choice && f.is_folder);
+  if(!folder) return alert("Invalid folder");
+
+  await sb.from("files").update({parent_id:folder.id}).eq("id",id);
+  load();
+}
+
+async function del(id,url){
+  if(url){
+    let name=url.split("/").pop();
+    await sb.storage.from("uploads").remove([name]);
+  }
+  await sb.from("files").delete().eq("id",id);
+  load();
+}
+
+async function createFolder(){
+  let name=prompt("Folder name?");
+  if(!name) return;
+  await sb.from("files").insert([{name,is_folder:true,parent_id:current}]);
+  load();
+}
+
+/* SEARCH */
+function search(){
+  let q=searchBox.value.toLowerCase();
+  container.innerHTML="";
+  items.filter(i=>i.name.toLowerCase().includes(q)).forEach(i=>{
+    let d=document.createElement("div");
+    d.className="card";
+    d.innerHTML=i.name;
+    container.appendChild(d);
+  });
+}
+
+/* INIT */
+load();
+
+</script>
+
+</body>
+</html>
